@@ -60,6 +60,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.soundsight.audio.ListenerService
 import com.soundsight.audio.MicSource
+import com.soundsight.audio.Sensitivity
 import com.soundsight.core.AlertConfig
 import com.soundsight.core.AppLanguage
 import com.soundsight.core.DailyQuotaGuard
@@ -143,6 +144,7 @@ fun PlaceholderScreen(
 
     var preAlertCount by remember { mutableIntStateOf(0) }
     var selectedMicSource by remember { mutableStateOf(ListenerService.micSource) }
+    var selectedSensitivity by remember { mutableStateOf(ListenerService.sensitivity) }
     var nsEnabled by remember { mutableStateOf(ListenerService.enableNoiseSuppressor) }
     var agcEnabled by remember { mutableStateOf(ListenerService.enableAutomaticGainControl) }
     var disableThinkingState by remember { mutableStateOf(GeminiConfig.disableThinking) }
@@ -341,6 +343,31 @@ fun PlaceholderScreen(
                                         ListenerService.restartRecording(context)
                                     },
                                     label = { Text(source.name, style = HistoryRow) },
+                                    colors = FilterChipDefaults.filterChipColors(
+                                        selectedContainerColor = AccentLive,
+                                        selectedLabelColor = BgIdle,
+                                        containerColor = Color(0xFF1E293B),
+                                        labelColor = FgIdle
+                                    )
+                                )
+                            }
+                        }
+
+                        // Sensitivity selector chips
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Sensitivity.values().forEach { sens ->
+                                FilterChip(
+                                    selected = (selectedSensitivity == sens),
+                                    onClick = {
+                                        selectedSensitivity = sens
+                                        ListenerService.sensitivity = sens
+                                    },
+                                    label = { Text(sens.name, style = HistoryRow) },
                                     colors = FilterChipDefaults.filterChipColors(
                                         selectedContainerColor = AccentLive,
                                         selectedLabelColor = BgIdle,
