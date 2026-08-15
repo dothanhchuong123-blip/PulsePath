@@ -4,11 +4,13 @@ import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.viewModels
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -35,6 +37,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -66,6 +69,7 @@ import com.soundsight.core.AppLanguage
 import com.soundsight.core.DailyQuotaGuard
 import com.soundsight.core.EnStrings
 import com.soundsight.core.LocalStrings
+import com.soundsight.core.OnboardingStore
 import com.soundsight.core.SoundSightStrings
 import com.soundsight.core.Telemetry
 import com.soundsight.core.ViStrings
@@ -73,7 +77,17 @@ import com.soundsight.data.ClassificationDebugResult
 import com.soundsight.data.ClassificationResult
 import com.soundsight.data.GeminiConfig
 import com.soundsight.data.SoundClassifier
+import com.soundsight.ui.Effect
+import com.soundsight.ui.Haptics
+import com.soundsight.ui.HudViewModel
+import com.soundsight.ui.debug.StereoProbeScreen
+import com.soundsight.ui.hud.HudScreen
+import com.soundsight.ui.onboarding.OnboardingFlow
+import com.soundsight.ui.settings.SettingsScreen
 import com.soundsight.ui.theme.AccentLive
+import kotlinx.coroutines.FlowPreview
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.sample
 import kotlinx.coroutines.launch
 import com.soundsight.ui.theme.AlertLabel
 import com.soundsight.ui.theme.AlertSub
@@ -89,11 +103,43 @@ import com.soundsight.ui.theme.WarningBg
 import java.util.Locale
 
 class MainActivity : ComponentActivity() {
+    private val viewModel: HudViewModel by viewModels()
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent {
+            val isRunning by ListenerService.isRunning.collectAsStateWithLifecycle()
+            LaunchedEffect(isRunning) {
+                if (isRunning) {
+                    window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                } else {
+                    window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                }
+            }
+
+            val context = LocalContext.current
+            val haptics = remember(context) { Haptics(context) }
+            LaunchedEffect(viewModel) {
+                viewModel.effects.collect { effect ->
+                    when (effect) {
+                        is Effect.Vibrate -> haptics.play(effect.pattern)
+                        is Effect.PreAlertFlash -> {
+                            // Flash is handled visually by HudScreen reacting to phase == PRE_ALERT
+                        }
+                    }
+                }
+            }
+
             var currentLanguage by remember { mutableStateOf(AppLanguage.VI) }
+
+            LaunchedEffect(Unit) {
+                try {
+                    val savedLang = OnboardingStore.languageFlow(context).first()
+                    currentLanguage = savedLang
+                } catch (_: Exception) {}
+            }
+
             val strings = when (currentLanguage) {
                 AppLanguage.VI -> ViStrings
                 AppLanguage.EN -> EnStrings
@@ -108,6 +154,7 @@ class MainActivity : ComponentActivity() {
                     ) {
                         composable("home") {
                             PlaceholderScreen(
+                                viewModel = viewModel,
                                 currentLanguage = currentLanguage,
                                 onToggleLanguage = {
                                     currentLanguage = if (currentLanguage == AppLanguage.VI) {
@@ -115,7 +162,45 @@ class MainActivity : ComponentActivity() {
                                     } else {
                                         AppLanguage.VI
                                     }
+                                },
+                                onNavigateToOnboarding = {
+                                    navController.navigate("onboarding")
+                                },
+                                onNavigateToStereoProbe = {
+                                    navController.navigate("stereo_probe")
                                 }
+                            )
+                        }
+                        composable("stereo_probe") {
+                            StereoProbeScreen(
+                                onBack = { navController.popBackStack() }
+                            )
+                        }
+                        composable("onboarding") {
+                            OnboardingFlow(
+                                onComplete = { lang ->
+                                    currentLanguage = lang
+                                    navController.navigate("hud") {
+                                        popUpTo("onboarding") { inclusive = true }
+                                    }
+                                }
+                            )
+                        }
+                        composable("hud") {
+                            val hudContext = LocalContext.current
+                            HudScreen(
+                                viewModel = viewModel,
+                                language = currentLanguage,
+                                onSettings = { navController.navigate("settings") },
+                                onStop = { ListenerService.stop(hudContext) }
+                            )
+                        }
+                        composable("settings") {
+                            SettingsScreen(
+                                language = currentLanguage,
+                                onLanguageChange = { currentLanguage = it },
+                                viewModel = viewModel,
+                                onBack = { navController.popBackStack() }
                             )
                         }
                     }
@@ -125,13 +210,21 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+@OptIn(FlowPreview::class)
 @Composable
 fun PlaceholderScreen(
+    viewModel: HudViewModel,
     currentLanguage: AppLanguage,
-    onToggleLanguage: () -> Unit
+    onToggleLanguage: () -> Unit,
+    onNavigateToOnboarding: () -> Unit,
+    onNavigateToStereoProbe: () -> Unit
 ) {
     val context = LocalContext.current
     val strings = SoundSightStrings.current
+
+    val hudState by viewModel.uiState.collectAsStateWithLifecycle()
+    val micLevel by remember(viewModel) { viewModel.micLevel.sample(100L) }
+        .collectAsStateWithLifecycle(initialValue = 0f)
 
     val isRunning by ListenerService.isRunning.collectAsStateWithLifecycle()
     val liveLevel by ListenerService.level.collectAsStateWithLifecycle()
@@ -670,6 +763,32 @@ fun PlaceholderScreen(
                         text = if (currentLanguage == AppLanguage.VI) "Chuyển sang English (EN)" else "Switch to Tiếng Việt (VI)",
                         style = HistoryRow,
                         color = FgIdle
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                TextButton(
+                    onClick = onNavigateToOnboarding,
+                    modifier = Modifier
+                        .testTag("btn_debug_onboarding")
+                ) {
+                    Text(
+                        text = "Xem Onboarding (debug)",
+                        style = HistoryRow,
+                        color = Degraded
+                    )
+                }
+
+                TextButton(
+                    onClick = onNavigateToStereoProbe,
+                    modifier = Modifier
+                        .testTag("btn_debug_stereo_probe")
+                ) {
+                    Text(
+                        text = "Stereo Probe (DSP Diagnostics)",
+                        style = HistoryRow,
+                        color = AccentLive
                     )
                 }
             }

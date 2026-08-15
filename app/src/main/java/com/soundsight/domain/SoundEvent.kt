@@ -50,7 +50,8 @@ data class SoundEvent(
     val captionEn: String,
     val capturedAtMs: Long,
     val resolvedAtMs: Long,
-    val repeatCount: Int = 1
+    val repeatCount: Int = 1,
+    val isDemo: Boolean = false
 ) {
     companion object {
         fun canonicalTier(id: SoundId): Tier {
@@ -72,7 +73,8 @@ data class SoundEvent(
             result: ClassificationResult,
             capturedAtMs: Long,
             resolvedAtMs: Long,
-            repeatCount: Int = 1
+            repeatCount: Int = 1,
+            isDemo: Boolean = false
         ): SoundEvent {
             val soundId = SoundId.fromString(result.soundId)
             val parsedTier = try {
@@ -88,7 +90,8 @@ data class SoundEvent(
                 captionEn = result.captionEn,
                 capturedAtMs = capturedAtMs,
                 resolvedAtMs = resolvedAtMs,
-                repeatCount = repeatCount
+                repeatCount = repeatCount,
+                isDemo = isDemo
             )
         }
 
@@ -100,7 +103,8 @@ data class SoundEvent(
             captionEn: String,
             capturedAtMs: Long,
             resolvedAtMs: Long,
-            repeatCount: Int = 1
+            repeatCount: Int = 1,
+            isDemo: Boolean = false
         ): SoundEvent {
             val soundId = SoundId.fromString(soundIdStr)
             val parsedTier = try {
@@ -116,7 +120,8 @@ data class SoundEvent(
                 captionEn = captionEn,
                 capturedAtMs = capturedAtMs,
                 resolvedAtMs = resolvedAtMs,
-                repeatCount = repeatCount
+                repeatCount = repeatCount,
+                isDemo = isDemo
             )
         }
     }

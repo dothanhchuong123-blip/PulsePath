@@ -23,11 +23,13 @@ import androidx.core.app.ActivityCompat
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import com.soundsight.R
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -126,6 +128,12 @@ class ListenerService : Service() {
         private val _timeSinceLastSpikeMs = MutableStateFlow(-1L)
         val timeSinceLastSpikeMs: StateFlow<Long> = _timeSinceLastSpikeMs.asStateFlow()
 
+        private val _micUnavailable = MutableStateFlow(false)
+        val micUnavailable: StateFlow<Boolean> = _micUnavailable.asStateFlow()
+
+        private val _permissionRevoked = MutableStateFlow(false)
+        val permissionRevoked: StateFlow<Boolean> = _permissionRevoked.asStateFlow()
+
         var sensitivity: Sensitivity = Sensitivity.MEDIUM
 
         // Debug-only statically settable configurations
@@ -134,6 +142,7 @@ class ListenerService : Service() {
         var enableAutomaticGainControl: Boolean = false
 
         fun start(context: Context) {
+            _permissionRevoked.value = false
             val intent = Intent(context, ListenerService::class.java).apply {
                 action = ACTION_START
             }
@@ -372,25 +381,38 @@ class ListenerService : Service() {
                         Manifest.permission.RECORD_AUDIO
                     ) != PackageManager.PERMISSION_GRANTED
                 ) {
+                    _permissionRevoked.value = true
                     stopSelf()
                     return@launch
                 }
 
-                val currentSource = micSource
-                Log.d(TAG, "Initializing AudioRecord with Source: $currentSource (AudioSource id: ${currentSource.audioSource})")
+                var record: AudioRecord? = null
+                var currentSource = micSource
+                while (isActive) {
+                    currentSource = micSource
+                    Log.d(TAG, "Initializing AudioRecord with Source: $currentSource (AudioSource id: ${currentSource.audioSource})")
 
-                val record = AudioRecord(
-                    currentSource.audioSource,
-                    SAMPLE_RATE,
-                    CHANNEL_CONFIG,
-                    AUDIO_FORMAT,
-                    bufferSize
-                )
+                    val candidate = AudioRecord(
+                        currentSource.audioSource,
+                        SAMPLE_RATE,
+                        CHANNEL_CONFIG,
+                        AUDIO_FORMAT,
+                        bufferSize
+                    )
 
-                if (record.state != AudioRecord.STATE_INITIALIZED) {
-                    Log.e(TAG, "AudioRecord failed to initialize with $currentSource")
-                    record.release()
-                    stopSelf()
+                    if (candidate.state != AudioRecord.STATE_INITIALIZED) {
+                        Log.e(TAG, "AudioRecord failed to initialize with $currentSource")
+                        _micUnavailable.value = true
+                        candidate.release()
+                        delay(5000)
+                    } else {
+                        _micUnavailable.value = false
+                        record = candidate
+                        break
+                    }
+                }
+
+                if (record == null || !isActive) {
                     return@launch
                 }
 
@@ -442,7 +464,10 @@ class ListenerService : Service() {
                 }
             } catch (e: SecurityException) {
                 Log.e(TAG, "SecurityException in AudioRecord: ${e.message}")
+                _permissionRevoked.value = true
                 stopSelf()
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 Log.e(TAG, "Exception in AudioRecord: ${e.message}")
                 stopSelf()
