@@ -1,5 +1,5 @@
 {
-  "name": "SoundSight",
+  "name": "PulsePath",
   "description": "Visual and haptic awareness layer for traffic sounds for Deaf and hard-of-hearing motorbike riders.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]

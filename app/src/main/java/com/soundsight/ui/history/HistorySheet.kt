@@ -29,6 +29,7 @@ import androidx.compose.material.icons.filled.Train
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -37,7 +38,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -48,16 +48,14 @@ import androidx.compose.ui.unit.sp
 import com.soundsight.core.AppLanguage
 import com.soundsight.core.SoundSightStrings
 import com.soundsight.domain.AlertPresentation
+import com.soundsight.ui.hud.glyphIcon
 import com.soundsight.domain.GlyphId
 import com.soundsight.domain.SoundEvent
 import com.soundsight.domain.Tier
 import com.soundsight.ui.theme.AlertSub
-import com.soundsight.ui.theme.BgIdle
 import com.soundsight.ui.theme.CriticalBg
 import com.soundsight.ui.theme.Degraded
-import com.soundsight.ui.theme.FgIdle
 import com.soundsight.ui.theme.HistoryRow
-import com.soundsight.ui.theme.IdleStatus
 import com.soundsight.ui.theme.WarningBg
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -77,8 +75,11 @@ fun HistorySheet(
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        containerColor = Color(0xFF1E293B),
-        contentColor = FgIdle,
+        // Non-hazard chrome follows the theme (light/dark/dynamic all work); only the tier
+        // dots and icons below stay fixed hazards. This used to be a hard-coded dark surface
+        // that ignored forced-light and dynamic schemes entirely.
+        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+        contentColor = MaterialTheme.colorScheme.onSurface,
         modifier = Modifier.testTag("history_bottom_sheet")
     ) {
         Column(
@@ -90,7 +91,7 @@ fun HistorySheet(
             Text(
                 text = strings.historyTitle,
                 style = AlertSub,
-                color = FgIdle,
+                color = MaterialTheme.colorScheme.onSurface,
                 fontWeight = FontWeight.Bold,
                 modifier = Modifier
                     .padding(bottom = 16.dp)
@@ -107,7 +108,7 @@ fun HistorySheet(
                     Text(
                         text = strings.historyEmpty,
                         style = HistoryRow,
-                        color = Degraded,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                         textAlign = TextAlign.Center,
                         modifier = Modifier.testTag("history_empty_text")
                     )
@@ -143,10 +144,11 @@ private fun HistoryRowItem(
     timeFormatted: String
 ) {
     val strings = SoundSightStrings.current
+    val colors = MaterialTheme.colorScheme
     val label = if (language == AppLanguage.VI) {
-        AlertPresentation.getLabelVi(event.soundId)
+        AlertPresentation.getLabelVi(event)
     } else {
-        AlertPresentation.getLabelEn(event.soundId)
+        AlertPresentation.getLabelEn(event)
     }
 
     val caption = if (language == AppLanguage.VI) {
@@ -155,27 +157,22 @@ private fun HistoryRowItem(
         event.captionEn.ifBlank { event.captionVi }
     }
 
-    val iconVector: ImageVector = when (AlertPresentation.getGlyph(event.soundId)) {
-        GlyphId.SHIELD -> Icons.Filled.Shield
-        GlyphId.MEGAPHONE -> Icons.Filled.Campaign
-        GlyphId.BELL -> Icons.Filled.Notifications
-        GlyphId.GAUGE -> Icons.Filled.Speed
-        GlyphId.ARROW_DOWN -> Icons.Filled.ArrowDownward
-        GlyphId.TRUCK -> Icons.Filled.LocalShipping
-        GlyphId.SIREN -> Icons.Filled.Emergency
-        GlyphId.TRAIN -> Icons.Filled.Train
-        GlyphId.BURST -> Icons.Filled.Warning
-        GlyphId.QUESTION -> Icons.Filled.QuestionMark
-    }
+    // Uses the shared mapping rather than its own copy: this file previously duplicated the
+    // GlyphId -> icon `when`, and adding one glyph broke it while the other two call sites kept
+    // compiling.
+    val iconVector: ImageVector = glyphIcon(AlertPresentation.getGlyph(event.soundId))
 
+    // Tier markers are the fixed hazard tokens - they are the learned signal, and never follow
+    // the wallpaper. Everything non-hazard around them reads theme roles.
     val tierDotColor = when (event.tier) {
         Tier.CRITICAL -> CriticalBg
         Tier.WARNING -> WarningBg
         Tier.SAFE -> Degraded
     }
+    val tierAccentColor = if (event.tier == Tier.CRITICAL) CriticalBg else WarningBg
 
     Surface(
-        color = BgIdle,
+        color = colors.surfaceContainer,
         shape = RoundedCornerShape(12.dp),
         modifier = Modifier
             .fillMaxWidth()
@@ -201,11 +198,12 @@ private fun HistoryRowItem(
 
                 Spacer(modifier = Modifier.width(10.dp))
 
-                // Icon
+                // Icon: hazard-tinted for critical/warning tiers (a redundant cue alongside the
+                // dot), theme chrome for safe tiers.
                 Icon(
                     imageVector = iconVector,
                     contentDescription = label,
-                    tint = if (event.tier == Tier.CRITICAL) CriticalBg else if (event.tier == Tier.WARNING) WarningBg else FgIdle,
+                    tint = if (event.tier == Tier.SAFE) colors.onSurfaceVariant else tierAccentColor,
                     modifier = Modifier.size(28.dp)
                 )
 
@@ -222,7 +220,7 @@ private fun HistoryRowItem(
                             text = label,
                             style = HistoryRow,
                             fontWeight = FontWeight.SemiBold,
-                            color = FgIdle,
+                            color = colors.onSurface,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
@@ -232,7 +230,7 @@ private fun HistoryRowItem(
                                 text = " ×${event.repeatCount}",
                                 style = HistoryRow,
                                 fontWeight = FontWeight.Bold,
-                                color = if (event.tier == Tier.CRITICAL) CriticalBg else WarningBg,
+                                color = tierAccentColor,
                                 fontSize = 13.sp
                             )
                         }
@@ -242,7 +240,7 @@ private fun HistoryRowItem(
                         Text(
                             text = caption,
                             style = HistoryRow,
-                            color = Degraded,
+                            color = colors.onSurfaceVariant,
                             fontSize = 12.sp,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
@@ -262,7 +260,7 @@ private fun HistoryRowItem(
                     Text(
                         text = strings.demoTagLabel,
                         style = HistoryRow,
-                        color = Degraded,
+                        color = colors.onSurfaceVariant,
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Medium
                     )
@@ -270,7 +268,7 @@ private fun HistoryRowItem(
                 Text(
                     text = timeFormatted,
                     style = HistoryRow,
-                    color = Degraded,
+                    color = colors.onSurfaceVariant,
                     fontSize = 12.sp,
                     textAlign = TextAlign.End
                 )

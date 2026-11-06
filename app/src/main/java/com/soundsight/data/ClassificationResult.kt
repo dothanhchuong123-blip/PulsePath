@@ -5,7 +5,8 @@ data class ClassificationResult(
     val tier: String,            // SAFE | WARNING | CRITICAL
     val confidence: Double,
     val captionVi: String,
-    val captionEn: String
+    val captionEn: String,
+    val motion: String = "UNKNOWN"  // APPROACHING | PASSING | RECEDING | UNKNOWN
 )
 
 data class HttpTrace(

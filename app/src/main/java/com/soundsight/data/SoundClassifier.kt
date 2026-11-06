@@ -6,8 +6,10 @@ import android.util.Log
 import com.soundsight.BuildConfig
 import com.soundsight.audio.AudioClip
 import com.soundsight.core.DailyQuotaGuard
+import com.soundsight.core.LogRedactor
 import com.soundsight.core.QuotaExhaustedException
 import com.soundsight.core.Telemetry
+import com.soundsight.data.live.UserKeyCredentialProvider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
@@ -79,7 +81,10 @@ object SoundClassifier {
         "take. Never mention danger levels or colours.\n" +
         "\n" +
         "Fill only the schema fields. Do not decide UI, vibration, or colour — that is\n" +
-        "the application's job."
+        "the application's job.\n\n" +
+        "You receive one short audio segment at a time. Each segment is a separate, independent event - do not let a previous segment influence your answer.\n\n" +
+        "Also report `motion`. If pitch and loudness are rising, or pitch is steady and high while loudness grows, report APPROACHING. If you hear a clear downward pitch shift together with falling loudness, report PASSING. If it is simply getting quieter, report RECEDING. If you cannot tell, report UNKNOWN - do not guess.\n\n" +
+        "NEVER report a left/right or front/back direction, and never mention direction in a caption. You are given a single-channel recording; that information is not present in it and the application determines direction by other means."
 
     private data class HttpResponseWithTrace(
         val body: String,
@@ -115,7 +120,7 @@ object SoundClassifier {
             } else {
                 Telemetry.recordFailure()
             }
-            Log.e(TAG, "Classification request failed: ${e.message}", e)
+            Log.e(TAG, "Classification request failed: ${LogRedactor.redact(e.message)}", LogRedactor.redactThrowable(e))
             Result.failure(e)
         } finally {
             inFlight.set(false)
@@ -206,6 +211,15 @@ object SoundClassifier {
         // confidence
         props.put("confidence", JSONObject().put("type", "NUMBER"))
 
+        // motion
+        val motionEnum = JSONArray(listOf("APPROACHING", "PASSING", "RECEDING", "UNKNOWN"))
+        props.put(
+            "motion",
+            JSONObject()
+                .put("type", "STRING")
+                .put("enum", motionEnum)
+        )
+
         // caption_vi
         props.put("caption_vi", JSONObject().put("type", "STRING"))
 
@@ -215,11 +229,11 @@ object SoundClassifier {
         schema.put("properties", props)
         schema.put(
             "required",
-            JSONArray(listOf("sound_id", "tier", "confidence", "caption_vi", "caption_en"))
+            JSONArray(listOf("sound_id", "tier", "confidence", "motion", "caption_vi", "caption_en"))
         )
         schema.put(
             "propertyOrdering",
-            JSONArray(listOf("sound_id", "tier", "confidence", "caption_vi", "caption_en"))
+            JSONArray(listOf("sound_id", "tier", "confidence", "motion", "caption_vi", "caption_en"))
         )
 
         genConfig.put("responseSchema", schema)
@@ -229,7 +243,7 @@ object SoundClassifier {
     }
 
     private suspend fun executeWithRetry(context: Context, requestJson: String): HttpResponseWithTrace {
-        val apiKey = BuildConfig.GEMINI_API_KEY
+        val apiKey = UserKeyCredentialProvider.getInstance(context).getApiKey()
         val url = "${GeminiConfig.ENDPOINT}/${GeminiConfig.MODEL_ID}:generateContent"
         val mediaType = "application/json; charset=utf-8".toMediaType()
         val requestBytes = requestJson.toByteArray(Charsets.UTF_8)
@@ -239,9 +253,10 @@ object SoundClassifier {
         var attempts = 0
 
         suspend fun attempt(): String {
+            val limit = DailyQuotaGuard.getDailyLimit(context)
             if (!DailyQuotaGuard.tryConsume(context)) {
                 throw QuotaExhaustedException(
-                    "Daily Gemini quota reached (${DailyQuotaGuard.dailyLimit} calls); Tier-1 pre-alerts still active"
+                    "Daily Gemini quota reached ($limit calls); Tier-1 pre-alerts still active"
                 )
             }
             attempts++
@@ -279,7 +294,7 @@ object SoundClassifier {
             attempt()
         } catch (e: Exception) {
             if (e is IOException || e is ServerErrorException) {
-                Log.w(TAG, "Attempt failed (${e.message}); retrying once after 400ms backoff...")
+                Log.w(TAG, "Attempt failed (${LogRedactor.redact(e.message)}); retrying once after 400ms backoff...")
                 delay(400)
                 attempt()
             } else {
@@ -346,7 +361,8 @@ object SoundClassifier {
             tier = resultJson.getString("tier"),
             confidence = resultJson.getDouble("confidence"),
             captionVi = resultJson.getString("caption_vi"),
-            captionEn = resultJson.getString("caption_en")
+            captionEn = resultJson.getString("caption_en"),
+            motion = resultJson.optString("motion", "UNKNOWN")
         )
         return Pair(classification, usage)
     }

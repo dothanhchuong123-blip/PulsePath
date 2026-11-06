@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Bar 1: Low -->
+    <path
+        android:pathData="M36.08,48.4 L36.08,59.6"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="6.16"
+        android:strokeLineCap="round" />
+    <!-- Bar 2: Mid -->
+    <path
+        android:pathData="M45.6,41.68 L45.6,66.32"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="6.16"
+        android:strokeLineCap="round" />
+    <!-- Bar 3: High -->
+    <path
+        android:pathData="M55.12,36.08 L55.12,71.92"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="6.16"
+        android:strokeLineCap="round" />
+    <!-- Path Arrow / Chevron -->
+    <path
+        android:pathData="M65.2,39.44 L75.28,54 L65.2,68.56"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="6.72"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+</vector>

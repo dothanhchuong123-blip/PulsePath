@@ -16,6 +16,7 @@ enum class HapticPattern {
 
 enum class GlyphId {
     SHIELD,
+    PERSON_HAIL,
     MEGAPHONE,
     BELL,
     GAUGE,
@@ -28,6 +29,26 @@ enum class GlyphId {
 }
 
 object AlertPresentation {
+
+    /**
+     * Labels and captions for a fall the motion sensors detected ([EventSource.MOTION]). The
+     * soundId is COLLISION_IMPACT, whose label "COLLISION NEARBY" describes a crash *heard*
+     * somewhere near the rider; a fall is the rider's own bike on the ground, and the words must
+     * say so - to the rider, and to whoever picks the phone up.
+     */
+    const val FALL_LABEL_VI = "NGÃ XE"
+    const val FALL_LABEL_EN = "FALL DETECTED"
+    const val FALL_CAPTION_VI = "Cảm biến chuyển động ghi nhận va đập mạnh, rồi xe nằm nghiêng bất động"
+    const val FALL_CAPTION_EN = "Motion sensors recorded a hard impact, then the bike lying still on its side"
+
+    /** The label for one event: a motion-detected fall reads as a fall, everything else by soundId. */
+    fun getLabelVi(event: SoundEvent): String =
+        if (event.source == EventSource.MOTION && event.soundId == SoundId.COLLISION_IMPACT) FALL_LABEL_VI
+        else getLabelVi(event.soundId)
+
+    fun getLabelEn(event: SoundEvent): String =
+        if (event.source == EventSource.MOTION && event.soundId == SoundId.COLLISION_IMPACT) FALL_LABEL_EN
+        else getLabelEn(event.soundId)
 
     fun getHoldMs(tier: Tier): Long {
         return when (tier) {
@@ -48,7 +69,14 @@ object AlertPresentation {
     fun getHapticTimings(pattern: HapticPattern): LongArray {
         return when (pattern) {
             HapticPattern.NONE -> longArrayOf()
-            HapticPattern.PRE_ALERT -> longArrayOf(0L, 60L)
+            // 60ms was inaudible-to-the-body on a bar-mounted phone: too short for the motor to
+            // reach full amplitude and spin down, so through a glove and a mount it registered as
+            // nothing at all. 150ms is past the ~30-50ms spin-up of a typical LRA/ERM and is the
+            // shortest pulse that reads as a distinct "tap" rather than a click. Still clearly
+            // shorter and single-pulse against WARNING's 180-80-180, so the escalation ladder
+            // (pre-alert < warning < critical) is preserved by both length and rhythm.
+            // NOT MEASURED against a specific handset; tune here if the demo device disagrees.
+            HapticPattern.PRE_ALERT -> longArrayOf(0L, 150L)
             HapticPattern.WARNING -> longArrayOf(0L, 180L, 80L, 180L)
             HapticPattern.CRITICAL -> longArrayOf(0L, 400L, 100L, 400L, 100L, 400L, 200L, 800L, 100L, 800L)
         }
@@ -81,7 +109,10 @@ object AlertPresentation {
     fun getGlyph(soundId: SoundId): GlyphId {
         return when (soundId) {
             SoundId.NORMAL_TRAFFIC -> GlyphId.SHIELD
-            SoundId.VOICE_SHOUT -> GlyphId.MEGAPHONE
+            // A person calling out to you, not a loudspeaker. This is the only alert in the set
+            // caused by a human trying to communicate with the rider directly - usually from
+            // behind, usually to get them to move - so it must not look like the vehicle alerts.
+            SoundId.VOICE_SHOUT -> GlyphId.PERSON_HAIL
             SoundId.MOTORCYCLE_HORN -> GlyphId.BELL
             SoundId.CAR_HORN -> GlyphId.BELL
             SoundId.SUDDEN_ACCELERATION -> GlyphId.GAUGE

@@ -7,9 +7,23 @@
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <!-- Only exercised when the rider opts into "Always on" location: a foreground service that
+         streams GNSS speed must declare the location FGS type. The runtime type is still chosen
+         per start from the current LocationMode and grant state - see ListenerService. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+
+    <!-- Optional, and only ever read at the moment the rider taps "send my location" on
+         the post-collision screen. Requested when they enable the emergency profile, never
+         at launch; the app is fully functional without it and the crash screen simply omits
+         the map link. Deliberately NOT SEND_SMS or CALL_PHONE - this app hands a pre-filled
+         intent to the phone's own dialer/messaging app and a human presses send. -->
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
 
     <application
         android:allowBackup="true"
@@ -24,6 +38,8 @@
             android:name="com.soundsight.MainActivity"
             android:exported="true"
             android:label="@string/app_name"
+            android:launchMode="singleTop"
+            android:resizeableActivity="true"
             android:theme="@style/Theme.SoundSight">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -36,7 +52,16 @@
             android:name="com.soundsight.audio.ListenerService"
             android:enabled="true"
             android:exported="false"
-            android:foregroundServiceType="microphone" />
+            android:foregroundServiceType="microphone|location" />
+
+        <receiver
+            android:name="com.soundsight.audio.liveness.LivenessWatchdogReceiver"
+            android:enabled="true"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.soundsight.action.LIVENESS_WATCHDOG_CHECK" />
+            </intent-filter>
+        </receiver>
     </application>
 
 </manifest>

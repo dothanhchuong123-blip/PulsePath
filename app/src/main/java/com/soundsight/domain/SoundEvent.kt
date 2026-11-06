@@ -42,6 +42,19 @@ enum class SoundId {
     }
 }
 
+enum class EventSource {
+    LOCAL,
+    CLOUD,
+    DEMO,
+
+    /**
+     * The phone's own accelerometer and gyroscope, not a microphone: a fall detected by
+     * [com.soundsight.audio.motion.FallDetector]. Only COLLISION_IMPACT is ever produced this
+     * way, and the presentation labels it as a fall rather than a collision heard nearby.
+     */
+    MOTION
+}
+
 data class SoundEvent(
     val soundId: SoundId,
     val tier: Tier,
@@ -51,7 +64,23 @@ data class SoundEvent(
     val capturedAtMs: Long,
     val resolvedAtMs: Long,
     val repeatCount: Int = 1,
-    val isDemo: Boolean = false
+    val isDemo: Boolean = false,
+    val source: EventSource = if (isDemo) EventSource.DEMO else EventSource.CLOUD,
+    /**
+     * Capture instant in the elapsed-realtime (monotonic) domain - the same domain as
+     * SensorEvent.timestamp / 1_000_000. The ONLY field motion corroboration may be judged on:
+     * a wall-clock step between capture and classification must not create or destroy apparent
+     * co-occurrence. Null for manually constructed events (demo, test, file replay), which by
+     * contract can never be motion-corroborated. Never mix or subtract this with [capturedAtMs].
+     */
+    val capturedMonotonicMs: Long? = null,
+    /**
+     * Measured motion context at the capture instant (GNSS speed with accuracy and fix age, plus
+     * the IMU moving vote), in "Always on" location mode; null otherwise - including when a fix
+     * was absent, because a missing measurement is recorded as missing, never as zero. See
+     * [com.soundsight.core.SpeedSnapshot].
+     */
+    val speedSnapshot: com.soundsight.core.SpeedSnapshot? = null
 ) {
     companion object {
         fun canonicalTier(id: SoundId): Tier {
@@ -69,12 +98,75 @@ data class SoundEvent(
             }
         }
 
+        fun fromLocal(
+            soundId: SoundId,
+            score: Float,
+            capturedAtMs: Long,
+            resolvedAtMs: Long,
+            repeatCount: Int = 1,
+            capturedMonotonicMs: Long? = null,
+            speedSnapshot: com.soundsight.core.SpeedSnapshot? = null
+        ): SoundEvent {
+            val tier = canonicalTier(soundId)
+            return SoundEvent(
+                soundId = soundId,
+                tier = tier,
+                confidence = score.toDouble(),
+                captionVi = AlertPresentation.getLabelVi(soundId),
+                captionEn = AlertPresentation.getLabelEn(soundId),
+                capturedAtMs = capturedAtMs,
+                resolvedAtMs = resolvedAtMs,
+                repeatCount = repeatCount,
+                isDemo = false,
+                source = EventSource.LOCAL,
+                capturedMonotonicMs = capturedMonotonicMs,
+                speedSnapshot = speedSnapshot
+            )
+        }
+
+        /**
+         * Confidence carried by a motion-detected fall. Not a probability - the fall rule fires
+         * or it does not, and no mounted-phone measurement of its hit rate exists yet (W-L9) -
+         * but the policy's CRITICAL floor is a confidence comparison, and a fall the rule
+         * reports is meant to be treated as CRITICAL, so it clears that floor with margin.
+         */
+        const val FALL_RULE_CONFIDENCE = 0.90
+
+        /**
+         * A fall detected from motion alone. Same soundId and tier as an audio collision so the
+         * takeover, the siren, history and the crash-response hand-off are the paths the rider
+         * already has; [EventSource.MOTION] and the fall captions are what make it read as what
+         * it is. [capturedAtMs] is the wall-clock instant of the impact, [capturedMonotonicMs]
+         * the same instant in the sensor domain.
+         */
+        fun fromFall(
+            capturedAtMs: Long,
+            resolvedAtMs: Long,
+            capturedMonotonicMs: Long,
+            speedSnapshot: com.soundsight.core.SpeedSnapshot? = null
+        ): SoundEvent = SoundEvent(
+            soundId = SoundId.COLLISION_IMPACT,
+            tier = Tier.CRITICAL,
+            confidence = FALL_RULE_CONFIDENCE,
+            captionVi = AlertPresentation.FALL_CAPTION_VI,
+            captionEn = AlertPresentation.FALL_CAPTION_EN,
+            capturedAtMs = capturedAtMs,
+            resolvedAtMs = resolvedAtMs,
+            repeatCount = 1,
+            isDemo = false,
+            source = EventSource.MOTION,
+            capturedMonotonicMs = capturedMonotonicMs,
+            speedSnapshot = speedSnapshot
+        )
+
         fun fromClassification(
             result: ClassificationResult,
             capturedAtMs: Long,
             resolvedAtMs: Long,
             repeatCount: Int = 1,
-            isDemo: Boolean = false
+            isDemo: Boolean = false,
+            capturedMonotonicMs: Long? = null,
+            speedSnapshot: com.soundsight.core.SpeedSnapshot? = null
         ): SoundEvent {
             val soundId = SoundId.fromString(result.soundId)
             val parsedTier = try {
@@ -91,7 +183,10 @@ data class SoundEvent(
                 capturedAtMs = capturedAtMs,
                 resolvedAtMs = resolvedAtMs,
                 repeatCount = repeatCount,
-                isDemo = isDemo
+                isDemo = isDemo,
+                source = if (isDemo) EventSource.DEMO else EventSource.CLOUD,
+                capturedMonotonicMs = if (isDemo) null else capturedMonotonicMs,
+                speedSnapshot = if (isDemo) null else speedSnapshot
             )
         }
 
@@ -104,7 +199,8 @@ data class SoundEvent(
             capturedAtMs: Long,
             resolvedAtMs: Long,
             repeatCount: Int = 1,
-            isDemo: Boolean = false
+            isDemo: Boolean = false,
+            source: EventSource = if (isDemo) EventSource.DEMO else EventSource.CLOUD
         ): SoundEvent {
             val soundId = SoundId.fromString(soundIdStr)
             val parsedTier = try {
@@ -121,7 +217,8 @@ data class SoundEvent(
                 capturedAtMs = capturedAtMs,
                 resolvedAtMs = resolvedAtMs,
                 repeatCount = repeatCount,
-                isDemo = isDemo
+                isDemo = isDemo,
+                source = source
             )
         }
     }

@@ -6,7 +6,7 @@ import org.junit.Test
 
 class AlertPolicyTest {
 
-    private val policy = AlertPolicy()
+    private val policy = AlertPolicy(collisionDetectionEnabled = { true })
 
     @Test
     fun testStaleDrop() {
@@ -17,7 +17,10 @@ class AlertPolicyTest {
             confidence = 0.90,
             captionVi = "Còi xe máy",
             captionEn = "Motorbike horn",
-            capturedAtMs = nowMs - 7000L, // 7000ms > STALE_MS (6500ms)
+            // Derived from STALE_MS rather than hard-coded: the previous literal 7000ms
+            // silently encoded the old 6500ms budget, which was below the pipeline's own
+            // latency, so this test passed while real alerts were being discarded.
+            capturedAtMs = nowMs - (AlertPolicy.STALE_MS + 500L),
             resolvedAtMs = nowMs - 5000L
         )
 
@@ -170,13 +173,14 @@ class AlertPolicyTest {
             confidence = 0.95,
             captionVi = "CÒI HƠI XE TẢI",
             captionEn = "TRUCK AIR HORN",
-            capturedAtMs = 6000L,
+            capturedAtMs = 11500L,
             resolvedAtMs = 12000L,
             repeatCount = 1
         )
 
         val nowMs = 12000L
         // nowMs (12000) - current.capturedAtMs (0) = 12000ms > DEDUP_WINDOW_MS (6000ms)
+        // and nowMs (12000) - incoming.capturedAtMs (11500) = 500ms <= ACTIONABLE_MS (2500ms)
         val decision = policy.decide(incoming = incoming, current = current, nowMs = nowMs)
         assertTrue(decision is AlertPolicy.Decision.Takeover)
         val takeoverEvent = (decision as AlertPolicy.Decision.Takeover).event
@@ -217,6 +221,7 @@ class AlertPolicyTest {
                     // Not taking over or merging
                 }
                 AlertPolicy.Decision.Discard -> {}
+                AlertPolicy.Decision.DiscardCollisionOff -> {}
             }
 
             timeMs += stepMs
@@ -274,5 +279,256 @@ class AlertPolicyTest {
         val decision = policy.decide(incoming = incoming, current = current, nowMs = 2500L)
         // UNKNOWN with canonical tier is SAFE -> LogOnly, but definitely not MergeWithCurrent
         assertTrue(decision !is AlertPolicy.Decision.MergeWithCurrent)
+    }
+
+    @Test
+    fun testMidConfidenceCriticalDemotedToWarning() {
+        val nowMs = 100_000L
+        // 0.70 clears MIN_CONFIDENCE but misses MIN_CRITICAL_CONFIDENCE (0.80): the rider
+        // still gets the alert, just without the full-screen CRITICAL takeover.
+        val midConfCritical = SoundEvent(
+            soundId = SoundId.EMERGENCY_SIREN,
+            tier = Tier.CRITICAL,
+            confidence = 0.70,
+            captionVi = "Còi hú",
+            captionEn = "Siren",
+            capturedAtMs = nowMs - 1000L,
+            resolvedAtMs = nowMs
+        )
+
+        val decision = policy.decide(incoming = midConfCritical, current = null, nowMs = nowMs)
+        assertTrue(decision is AlertPolicy.Decision.Takeover)
+        assertEquals(Tier.WARNING, (decision as AlertPolicy.Decision.Takeover).event.tier)
+    }
+
+    @Test
+    fun testCriticalAtExactFloorStaysCritical() {
+        val nowMs = 100_000L
+        val atFloor = SoundEvent(
+            soundId = SoundId.TRUCK_AIR_HORN,
+            tier = Tier.CRITICAL,
+            confidence = AlertPolicy.MIN_CRITICAL_CONFIDENCE,
+            captionVi = "CÒI HƠI XE TẢI",
+            captionEn = "TRUCK AIR HORN",
+            capturedAtMs = nowMs - 1000L,
+            resolvedAtMs = nowMs
+        )
+
+        val decision = policy.decide(incoming = atFloor, current = null, nowMs = nowMs)
+        assertTrue(decision is AlertPolicy.Decision.Takeover)
+        assertEquals(Tier.CRITICAL, (decision as AlertPolicy.Decision.Takeover).event.tier)
+    }
+
+    @Test
+    fun testVeryLowConfidenceCriticalDemotedOnlyOneTier() {
+        val nowMs = 100_000L
+        // Demotion is single-step: even a barely-confident CRITICAL lands on WARNING and is
+        // shown, rather than cascading down to SAFE and being logged silently.
+        val veryLowCritical = SoundEvent(
+            soundId = SoundId.COLLISION_IMPACT,
+            tier = Tier.CRITICAL,
+            confidence = 0.10,
+            captionVi = "Va chạm",
+            captionEn = "Collision",
+            capturedAtMs = nowMs - 1000L,
+            resolvedAtMs = nowMs
+        )
+
+        val decision = policy.decide(incoming = veryLowCritical, current = null, nowMs = nowMs)
+        assertTrue(decision is AlertPolicy.Decision.Takeover)
+        assertEquals(Tier.WARNING, (decision as AlertPolicy.Decision.Takeover).event.tier)
+    }
+
+    @Test
+    fun testRealisticPipelineLatencyIsNotDiscarded() {
+        val nowMs = 100_000L
+        // A real truck air horn measured on-device: ~2.2s clip plus ~5.6s Live round trip, so
+        // the event is ~7.8s old by the time it is decided. Under the old 6500ms budget this
+        // was silently discarded and the rider saw nothing at all. Under STALE_MS=12000L it is
+        // preserved, but because 7.8s > ACTIONABLE_MS (2500ms) for a cloud non-collision event,
+        // it resolves to LogOnly rather than seizing screen ownership with Takeover.
+        val realWorldAge = 7_800L
+        val airHorn = SoundEvent(
+            soundId = SoundId.TRUCK_AIR_HORN,
+            tier = Tier.CRITICAL,
+            confidence = 0.95,
+            captionVi = "CÒI HƠI XE TẢI",
+            captionEn = "TRUCK AIR HORN",
+            capturedAtMs = nowMs - realWorldAge,
+            resolvedAtMs = nowMs
+        )
+
+        val decision = policy.decide(incoming = airHorn, current = null, nowMs = nowMs)
+        assertTrue("a horn at p90 pipeline latency is recorded in LogOnly, not discarded", decision is AlertPolicy.Decision.LogOnly)
+        assertEquals(Tier.CRITICAL, (decision as AlertPolicy.Decision.LogOnly).event.tier)
+    }
+
+    @Test
+    fun testPathologicallyOldEventStillDiscarded() {
+        val nowMs = 100_000L
+        // Well past any normal pipeline latency - e.g. a reconnect path surfacing an old clip.
+        // The guard must still fire here, otherwise it protects nothing.
+        val ancient = SoundEvent(
+            soundId = SoundId.EMERGENCY_SIREN,
+            tier = Tier.CRITICAL,
+            confidence = 0.95,
+            captionVi = "Còi hú",
+            captionEn = "Siren",
+            capturedAtMs = nowMs - (AlertPolicy.STALE_MS + 1_000L),
+            resolvedAtMs = nowMs
+        )
+
+        assertEquals(AlertPolicy.Decision.Discard, policy.decide(incoming = ancient, current = null, nowMs = nowMs))
+    }
+
+    @Test
+    fun testStaleBudgetExceedsMeasuredPipelineLatency() {
+        // Guards the calibration itself: the budget has to sit above the pipeline's own p90
+        // total age (~8.4s measured), or the guard discards good alerts instead of stale ones.
+        assertTrue(
+            "STALE_MS=${AlertPolicy.STALE_MS} is below measured p90 pipeline age",
+            AlertPolicy.STALE_MS > 8_400L
+        )
+    }
+
+    @Test
+    fun testMidConfidenceCollisionWithMotionCorroborationStaysCritical() {
+        val nowMs = 100_000L
+        val collision = SoundEvent(
+            soundId = SoundId.COLLISION_IMPACT,
+            tier = Tier.CRITICAL,
+            confidence = 0.65, // below MIN_CRITICAL_CONFIDENCE on its own
+            captionVi = "Va chạm",
+            captionEn = "Collision",
+            capturedAtMs = nowMs - 1000L,
+            resolvedAtMs = nowMs
+        )
+
+        val decision = policy.decide(
+            incoming = collision,
+            current = null,
+            nowMs = nowMs,
+            motionCorroborated = true
+        )
+        assertTrue(decision is AlertPolicy.Decision.Takeover)
+        assertEquals(Tier.CRITICAL, (decision as AlertPolicy.Decision.Takeover).event.tier)
+    }
+
+    @Test
+    fun testMidConfidenceCollisionWithoutMotionCorroborationStillDemoted() {
+        val nowMs = 100_000L
+        val collision = SoundEvent(
+            soundId = SoundId.COLLISION_IMPACT,
+            tier = Tier.CRITICAL,
+            confidence = 0.65,
+            captionVi = "Va chạm",
+            captionEn = "Collision",
+            capturedAtMs = nowMs - 1000L,
+            resolvedAtMs = nowMs
+        )
+
+        // motionCorroborated defaults to false - regression guard that existing call sites
+        // (which don't pass it) keep today's behavior unchanged.
+        val decision = policy.decide(incoming = collision, current = null, nowMs = nowMs)
+        assertTrue(decision is AlertPolicy.Decision.Takeover)
+        assertEquals(Tier.WARNING, (decision as AlertPolicy.Decision.Takeover).event.tier)
+    }
+
+    @Test
+    fun testMotionCorroborationDoesNotExemptNonCollisionSounds() {
+        val nowMs = 100_000L
+        // A motion spike happening to coincide with, say, a mid-confidence truck horn is not
+        // physical evidence the horn classification is correct - corroboration must be
+        // soundId-specific, not a blanket override for any CRITICAL event.
+        val horn = SoundEvent(
+            soundId = SoundId.TRUCK_AIR_HORN,
+            tier = Tier.CRITICAL,
+            confidence = 0.65,
+            captionVi = "CÒI HƠI XE TẢI",
+            captionEn = "TRUCK AIR HORN",
+            capturedAtMs = nowMs - 1000L,
+            resolvedAtMs = nowMs
+        )
+
+        val decision = policy.decide(
+            incoming = horn,
+            current = null,
+            nowMs = nowMs,
+            motionCorroborated = true
+        )
+        assertTrue(decision is AlertPolicy.Decision.Takeover)
+        assertEquals(Tier.WARNING, (decision as AlertPolicy.Decision.Takeover).event.tier)
+    }
+
+    @Test
+    fun testMotionCorroborationDoesNotRescueVeryLowConfidenceCollision() {
+        val nowMs = 100_000L
+        // Corroboration exempts the CRITICAL demotion branch only; it must not also bypass the
+        // separate very-low-confidence tier ladder if the design changes later. At present the
+        // only demotion branch for CRITICAL is this one, so this asserts the branch condition
+        // itself is confidence-based, not "corroboration always wins".
+        val collision = SoundEvent(
+            soundId = SoundId.COLLISION_IMPACT,
+            tier = Tier.CRITICAL,
+            confidence = 0.95, // already above the floor - corroboration should be a no-op here
+            captionVi = "Va chạm",
+            captionEn = "Collision",
+            capturedAtMs = nowMs - 1000L,
+            resolvedAtMs = nowMs
+        )
+
+        val decision = policy.decide(
+            incoming = collision,
+            current = null,
+            nowMs = nowMs,
+            motionCorroborated = true
+        )
+        assertTrue(decision is AlertPolicy.Decision.Takeover)
+        assertEquals(Tier.CRITICAL, (decision as AlertPolicy.Decision.Takeover).event.tier)
+    }
+
+    @Test
+    fun testCollisionSuppressedWhenDetectionOff() {
+        val policyWithCollisionOff = AlertPolicy(collisionDetectionEnabled = { false })
+        val nowMs = 100_000L
+        val collision = SoundEvent(
+            soundId = SoundId.COLLISION_IMPACT,
+            tier = Tier.CRITICAL,
+            confidence = 0.95,
+            captionVi = "Va chạm",
+            captionEn = "Collision",
+            capturedAtMs = nowMs - 1000L,
+            resolvedAtMs = nowMs
+        )
+
+        val decision = policyWithCollisionOff.decide(
+            incoming = collision,
+            current = null,
+            nowMs = nowMs,
+            motionCorroborated = true
+        )
+        assertEquals(AlertPolicy.Decision.DiscardCollisionOff, decision)
+    }
+
+    @Test
+    fun testNonCollisionNotSuppressedWhenDetectionOff() {
+        val policyWithCollisionOff = AlertPolicy(collisionDetectionEnabled = { false })
+        val nowMs = 100_000L
+        val siren = SoundEvent(
+            soundId = SoundId.EMERGENCY_SIREN,
+            tier = Tier.CRITICAL,
+            confidence = 0.95,
+            captionVi = "Còi cứu thương",
+            captionEn = "Emergency siren",
+            capturedAtMs = nowMs - 1000L,
+            resolvedAtMs = nowMs
+        )
+
+        val decision = policyWithCollisionOff.decide(
+            incoming = siren,
+            current = null,
+            nowMs = nowMs
+        )
+        assertTrue(decision is AlertPolicy.Decision.Takeover)
     }
 }

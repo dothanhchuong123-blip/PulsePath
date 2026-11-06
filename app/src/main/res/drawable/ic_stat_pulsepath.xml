@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Notification small icon: single-colour silhouette on transparency so the
+     system can tint it. Geometry from ic_launcher_monochrome.xml, whose art
+     bbox is 45.6 x 42.0 centred at (55.8, 54.0) in the 108 adaptive-icon
+     viewport (~42% of canvas). Scaled 1.97x about that centre so it fills
+     ~20 of 24dp at status-bar size instead of rendering tiny. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <group
+        android:scaleX="1.97"
+        android:scaleY="1.97"
+        android:pivotX="55.8"
+        android:pivotY="54.0">
+        <!-- Bar 1: Low -->
+        <path
+            android:pathData="M36.08,48.4 L36.08,59.6"
+            android:strokeColor="#FFFFFF"
+            android:strokeWidth="6.16"
+            android:strokeLineCap="round" />
+        <!-- Bar 2: Mid -->
+        <path
+            android:pathData="M45.6,41.68 L45.6,66.32"
+            android:strokeColor="#FFFFFF"
+            android:strokeWidth="6.16"
+            android:strokeLineCap="round" />
+        <!-- Bar 3: High -->
+        <path
+            android:pathData="M55.12,36.08 L55.12,71.92"
+            android:strokeColor="#FFFFFF"
+            android:strokeWidth="6.16"
+            android:strokeLineCap="round" />
+        <!-- Path Arrow / Chevron -->
+        <path
+            android:pathData="M65.2,39.44 L75.28,54 L65.2,68.56"
+            android:strokeColor="#FFFFFF"
+            android:strokeWidth="6.72"
+            android:strokeLineCap="round"
+            android:strokeLineJoin="round" />
+    </group>
+</vector>

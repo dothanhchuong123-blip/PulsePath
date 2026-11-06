@@ -7,6 +7,7 @@ import android.os.VibrationAttributes
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
+import com.soundsight.core.AlertConfig
 import com.soundsight.domain.AlertPresentation
 import com.soundsight.domain.HapticPattern
 
@@ -21,6 +22,14 @@ class Haptics(private val context: Context) {
     }
 
     fun play(pattern: HapticPattern) {
+        // Master vibration switch, checked first so no pattern - not even CRITICAL - can vibrate
+        // when the rider has turned haptics off. The caller still fires the visual alert and still
+        // writes history; only the buzz is suppressed. See AlertConfig.vibrationEnabled.
+        if (!AlertConfig.vibrationEnabled) {
+            cancel()
+            return
+        }
+
         if (pattern == HapticPattern.NONE) {
             cancel()
             return

@@ -8,9 +8,16 @@ import java.util.Locale
 class QuotaExhaustedException(message: String) : Exception(message)
 
 object DailyQuotaGuard {
-    var dailyLimit: Int = 15 // safety margin below the observed 20/day free-tier
-                             // cap — Google's actual reset clock is not known to
-                             // match device-local midnight, so leave headroom.
+    const val DEFAULT_BUILTIN_LIMIT = 480
+    const val DEFAULT_USER_LIMIT = 1500
+
+    // REST fallback path only (SoundClassifier). Confirmed via the Google
+    // Cloud rate-limits dashboard on 16/08/2026: gemini-3.5-flash-lite has
+    // RPD=500 on this project. 480 leaves a 20-call safety margin in case
+    // Google's reset clock doesn't align exactly with device-local midnight.
+    // When a user provides their own key, this guard tracks THEIR budget
+    // (configurable, defaulting to 1,500 calls/day).
+    var dailyLimit: Int = DEFAULT_BUILTIN_LIMIT
 
     private const val PREFS_NAME = "soundsight_quota"
     private const val KEY_DATE = "quota_date"
@@ -18,6 +25,44 @@ object DailyQuotaGuard {
 
     private fun getTodayDateString(): String {
         return SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())
+    }
+
+    /**
+     * Resolves the active daily quota limit:
+     * - If the user has entered their own API key: returns their configured budget (default 1,500).
+     * - Otherwise: returns the built-in APK key limit (480).
+     */
+    fun getDailyLimit(context: Context): Int {
+        return try {
+            val store = EncryptedCredentialStore.getInstance(context)
+            if (store.hasUserKey()) {
+                store.getUserDailyLimit() ?: DEFAULT_USER_LIMIT
+            } else {
+                dailyLimit
+            }
+        } catch (_: Exception) {
+            dailyLimit
+        }
+    }
+
+    /**
+     * Sets a custom daily quota limit for the user key.
+     */
+    fun setUserDailyLimit(context: Context, limit: Int) {
+        try {
+            EncryptedCredentialStore.getInstance(context).setUserDailyLimit(limit)
+        } catch (_: Exception) {
+            dailyLimit = limit
+        }
+    }
+
+    /**
+     * Resets today's consumption count (e.g. when changing or clearing credentials).
+     */
+    @Synchronized
+    fun resetTodayCount(context: Context) {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        prefs.edit().putInt(KEY_COUNT, 0).apply()
     }
 
     @Synchronized
@@ -35,7 +80,8 @@ object DailyQuotaGuard {
                 .apply()
         }
 
-        if (count >= dailyLimit) {
+        val activeLimit = getDailyLimit(context)
+        if (count >= activeLimit) {
             return false
         }
 
@@ -53,6 +99,7 @@ object DailyQuotaGuard {
         val today = getTodayDateString()
         val storedDate = prefs.getString(KEY_DATE, null)
         val count = if (storedDate == today) prefs.getInt(KEY_COUNT, 0) else 0
-        return (dailyLimit - count).coerceAtLeast(0)
+        val activeLimit = getDailyLimit(context)
+        return (activeLimit - count).coerceAtLeast(0)
     }
 }
