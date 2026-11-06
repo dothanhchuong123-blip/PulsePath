@@ -136,3 +136,7 @@ Kotlin, Jetpack Compose, Room, YAMNet (TensorFlow Lite) for on-device sound reco
 ## Contributing and feedback
 
 Issues and ideas are welcome. Open an issue on this repository.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
